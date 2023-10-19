@@ -1,0 +1,165 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# BIOE215 Week 3 Assessment
+
+*Aspen Ellis*
+
+```{r}
+library(tidyverse)
+library(here) #this is how to get filepaths to play nice in projects
+bor_nestlings <- read_csv(here::here("data/73_species.csv"))
+bor_traits <- read.csv(here::here("data/Traits_73_species.csv"))
+avonet <- readxl::read_excel(here::here("data/AVONET_20Supplementary_20dataset_201.xlsx"), sheet = "AVONET1_BirdLife")
+
+
+```
+
+*Are nestlings showing up earlier in the year over time?*
+
+```{r}
+all_birds_trend <- bor_nestlings %>% 
+  group_by(Year) %>% 
+  summarize(mean_doy = mean(Dayofyear))
+
+ggplot(all_birds_trend, aes(Year, mean_doy)) + 
+  geom_point() +
+  geom_smooth(method = "lm")
+```
+
+Yes they are!
+
+But that was grouped, why don't we look by species:
+
+```{r}
+species_trends <- bor_nestlings %>% 
+  group_by(Year, Species) %>% 
+  summarize(mean_doy = mean(Dayofyear),
+            .groups = "drop")
+
+ggplot(species_trends, aes(Year, mean_doy, color = Species)) + 
+  geom_point() +
+  geom_smooth(method = "lm")
+```
+
+yeaaarrrgh!! chaos. let's just look at the five spp that we have the most data for:
+
+```{r}
+data_richness <- bor_nestlings %>% 
+  count(Species)
+
+most_rich <- data_richness %>% 
+  arrange(desc(n)) %>% 
+  slice(1:5)
+
+most_rich_trends <- bor_nestlings %>% 
+  filter(Species %in% most_rich$Species) %>% 
+  group_by(Species, Year) %>% 
+  summarize(mean_doy = mean(Dayofyear), 
+            .groups = "drop")
+
+ggplot(most_rich_trends, aes(Year, mean_doy, color = Species)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+```
+
+much nicer :) most are getting earlier but LARARG is getting later. What species have the strongest trends?
+
+```{r}
+# I'm giving you a *function* to help here. You'll learn more about those next week.
+
+# Finds the slope of the relationship between y and x
+trend <- function(x, y) {
+  xy_lm <- lm(y ~ x)
+  coef(xy_lm)[2]
+}
+
+# Calculate the trend for all species
+bor_trends <- species_trends %>% 
+  group_by(Species) %>% 
+  summarize(doy_trend = trend(Year, mean_doy))
+
+```
+
+Spot check two species
+
+```{r}
+soi <- c("ARDCIN", "LARMIN")
+species_trends %>% 
+  filter(Species %in% soi) %>% 
+  ggplot(aes(Year, mean_doy, color = Species)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+```
+
+My turn apparently: finding the species with most positive and negative trends and just plot those
+
+```{r}
+nrow_bor_trends <- nrow(bor_trends) # Use this later
+bor_extreme <- bor_trends %>% 
+  # Sort by the day of year trend
+  arrange(doy_trend) %>% 
+  # Keep just the first (most negative trend) and last (most positive trend) rows
+  slice(c(1, nrow_bor_trends))
+
+# Now plot them
+species_trends %>% 
+  filter(Species %in% bor_extreme$Species) %>% 
+  ggplot(aes(Year, mean_doy, color = Species)) + 
+    geom_point() +
+    geom_smooth(method = "lm")
+```
+
+Next we're going to test the hypothesis that smaller birds have more flexible phenology, i.e. the absolute value of the trend is correlated with smaller body sizes.
+
+To test our hypothesis, we need to add AVONET data to our phenology data by joining. The keys are a bit tricky here!
+
+`bor_nestlings` has a column called `Species` with a 6-letter code.
+
+`bor_traits` has a column called `Abbreviation` with the 6-letter code and a column called `` `Scientific name` `` with the binomial name.
+
+`avonet` has column called `Species1` with the binomial name.
+
+We need to join `bor_nestlings` to `bor_traits`, then join with `avonet`.
+
+```{r}
+# First, select and rename important columns
+avonet_size <- select(avonet, SciName = Species1, Mass_g = Mass)
+bor_sciname <- select(bor_traits, 
+                      Species = Abbreviation, 
+                      SciName = Scientific.name)
+```
+
+Now join them all together.
+
+```{r}
+bor_trends_size <- bor_trends %>% 
+  left_join(bor_sciname, bor_nestlings, by = "Species") %>% 
+  left_join(avonet_size, by = "SciName") %>% 
+  mutate(abs_trend = abs(doy_trend))
+
+# Plot it
+ggplot(bor_trends_size, aes(Mass_g, abs_trend)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+```
+
+Hard to interpret - make a new variable, `bor_trends_size2`, that removes the missing values in `Mass_g` and keeps only birds smaller than 2000 g with an absolute trend less than 1.
+
+```{r}
+bor_trends_size2 <- bor_trends_size %>% 
+  filter(!is.na(Mass_g)) %>% 
+  filter(Mass_g<2000) %>% 
+  filter(abs_trend<1)
+  
+ggplot(bor_trends_size2, aes(Mass_g, abs_trend)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+```
+
+Still kinda hard to say lol I'd say it doesn't look like very compelling support for our hypothesis.
+
+OK TTFN!
